@@ -1,5 +1,30 @@
+# Spotify OAuth token cache (contains access/refresh tokens)
 .cache
-.DS_Store
-__pycache__/
+.cache-*
+
+# Environment variables (contains API keys)
 .env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
 .idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Virtual environment
+.venv/
+venv/

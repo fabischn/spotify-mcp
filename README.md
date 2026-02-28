@@ -1,82 +1,107 @@
-# spotify-mcp MCP server
+# spotify-mcp
 
-MCP project to connect Claude with Spotify. Built on top of [spotipy-dev's API](https://github.com/spotipy-dev/spotipy/tree/2.24.0).
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that connects Claude with Spotify. Control your Spotify playback, search music, manage playlists, and more -- all through natural conversation with Claude.
 
-[Notice Feb 2026]: I am not really planning on updating this repo or accepting PRs, due to the ease of creating MCPs with AI agents at this point.
+> **Fork Notice**: This project is forked from [varunneal/spotify-mcp](https://github.com/varunneal/spotify-mcp) and updated for the **Spotify Web API February 2026 changes**. Built and maintained with [Claude Code](https://claude.ai/claude-code).
 
-## Features
+## What's Changed (v0.3.0)
 
+### Spotify API Feb 2026 Adaptation
+- **Search limit**: Default reduced to 5, max capped at 10 (Spotify Dev Mode restriction)
+- **Playlist endpoints**: Migrated from `/tracks` to `/items` (new API requirement)
+- **Response field compatibility**: Handles both old (`tracks`/`track`) and new (`items`/`item`) field names
+- **Batch endpoints removed**: Artist genre lookups now use parallel individual fetches via `ThreadPoolExecutor`
+- **Playlist creation**: Uses `POST /me/playlists` instead of deprecated `POST /users/{id}/playlists`
+
+### Bug Fixes & Improvements
+- **Fixed**: `assert` crash replaced with proper error handling for unknown tool names
+- **Fixed**: `change_playlist_details()` now returns the API response
+- **Fixed**: `get_liked_songs()` limit edge case -- stops fetching as soon as limit is reached
+- **Fixed**: Null track handling in liked songs pagination
+- **Improved**: Search default limit aligned with Spotify's new default (5)
+- **Improved**: `.gitignore` expanded to cover more edge cases (`.cache-*`, `.env.*`, build artifacts)
+- **Security**: OAuth token cache (`.cache`) excluded from repository
+
+### Original Features (from upstream)
 - Start, pause, and skip playback
-- Search for tracks/albums/artists/playlists
-- Get info about a track/album/artist/playlist
-- Manage the Spotify queue
-- Manage, create, and update playlists
+- Search for tracks, albums, artists, and playlists
+- Get detailed info about any Spotify item
+- Manage the playback queue
+- Full playlist CRUD (create, read, update, delete tracks)
+- Retrieve liked/saved songs with optional genre enrichment
 
-## Demo
+## How It Works
 
-<details>
-  <summary>
-    Video -- turn on audio
-  </summary>
-  https://github.com/user-attachments/assets/20ee1f92-f3e3-4dfa-b945-ca57bc1e0894
-</details>
+```
+Claude <--MCP (stdio)--> spotify-mcp server <--REST API--> Spotify Web API
+```
+
+1. Claude sends tool calls (e.g., `SpotifySearch`, `SpotifyPlayback`) via the MCP protocol
+2. The MCP server receives these calls and translates them into Spotify Web API requests
+3. Authentication is handled via OAuth 2.0 (Authorization Code Flow) with automatic token refresh
+4. Results are parsed into clean, concise JSON and returned to Claude
+
+### Available Tools
+
+| Tool | Actions | Description |
+|------|---------|-------------|
+| `SpotifyPlayback` | `get`, `start`, `pause`, `skip` | Control music playback |
+| `SpotifySearch` | -- | Search tracks, albums, artists, playlists |
+| `SpotifyQueue` | `get`, `add` | View and manage play queue |
+| `SpotifyGetInfo` | -- | Get detailed item info by Spotify URI |
+| `SpotifyPlaylist` | `get`, `get_tracks`, `add_tracks`, `remove_tracks`, `change_details`, `create` | Full playlist management |
+| `SpotifyLikedSongs` | `get`, `get_with_genres` | Retrieve saved songs with optional genres |
+
+### Architecture
+
+```
+src/spotify_mcp/
+  __init__.py       # Package entry point
+  server.py         # MCP server - tool definitions & request routing
+  spotify_api.py    # Spotify API client wrapper (auth, playback, search, playlists)
+  utils.py          # Response parsers & decorators (validate, ensure_username)
+```
+
+## Prerequisites
+
+- **Python 3.12+**
+- **Spotify Premium** account (required for Dev Mode API access since Feb 2026)
+- **Spotify Developer App** credentials
 
 ## Configuration
 
-### Getting Spotify API Keys
+### 1. Create Spotify Developer App
 
-Create an account on [developer.spotify.com](https://developer.spotify.com/). Navigate to [the dashboard](https://developer.spotify.com/dashboard). 
-Create an app with redirect_uri as http://127.0.0.1:8080/callback. 
-You can choose any port you want but you must use http and an explicit loopback address (IPv4 or IPv6).
+1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
+2. Create a new app
+3. Set redirect URI to `http://127.0.0.1:8080/callback`
+4. Note your **Client ID** and **Client Secret**
 
-See [here](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri) for more info/troubleshooting. 
-You may have to restart your MCP environment (e.g. Claude Desktop) once or twice before it works.
+> **Important (Feb 2026)**: Dev Mode apps are limited to 5 authorized users and require the app owner to have Spotify Premium.
 
-### Locating MCP Config
+### 2. Set Up Environment
 
-For Cursor, Claude Desktop, or any other MCP-enabled client you will have to locate your config.
+Copy the example environment file and fill in your credentials:
 
-- Claude Desktop location on MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
+```bash
+cp .env.example .env
+# Edit .env with your SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI
+```
 
-- Claude Desktop location on Windows: `%APPDATA%/Claude/claude_desktop_config.json`
+### 3. Add to MCP Client
 
+#### Run locally (recommended)
 
-### Run this project with uvx
+```bash
+git clone https://github.com/verIdyia/spotify-mcp.git
+```
 
-Add this snippet to your MCP Config.
+Add to your MCP config (Claude Desktop, Cursor, etc.):
 
 ```json
 {
   "mcpServers": {
     "spotify": {
-      "command": "uvx",
-      "args": [
-        "--python", "3.12",
-        "--from", "git+https://github.com/varunneal/spotify-mcp",
-        "spotify-mcp"
-      ],
-      "env": {
-        "SPOTIFY_CLIENT_ID": YOUR_CLIENT_ID,
-        "SPOTIFY_CLIENT_SECRET": YOUR_CLIENT_SECRET,
-        "SPOTIFY_REDIRECT_URI": "http://127.0.0.1:8080/callback"
-      }
-    }
-  }
-}
-```
-
-### Run this project locally
-
-Using UVX will open the spotify redirect URI for every tool call. To avoid this, you can run this project locally by cloning this repo:
-
-```bash
-git clone https://github.com/varunneal/spotify-mcp.git
-```
-
-Add it to your MCP Config like this:
-
-  ```json
-  "spotify": {
       "command": "uv",
       "args": [
         "--directory",
@@ -85,91 +110,81 @@ Add it to your MCP Config like this:
         "spotify-mcp"
       ],
       "env": {
-        "SPOTIFY_CLIENT_ID": YOUR_CLIENT_ID,
-        "SPOTIFY_CLIENT_SECRET": YOUR_CLIENT_SECRET,
+        "SPOTIFY_CLIENT_ID": "your_client_id",
+        "SPOTIFY_CLIENT_SECRET": "your_client_secret",
         "SPOTIFY_REDIRECT_URI": "http://127.0.0.1:8080/callback"
       }
     }
-  ```
+  }
+}
+```
 
-### Troubleshooting
+#### Run with uvx
 
-Please open an issue if you can't get this MCP working. Here are some tips:
+```json
+{
+  "mcpServers": {
+    "spotify": {
+      "command": "uvx",
+      "args": [
+        "--python", "3.12",
+        "--from", "git+https://github.com/verIdyia/spotify-mcp",
+        "spotify-mcp"
+      ],
+      "env": {
+        "SPOTIFY_CLIENT_ID": "your_client_id",
+        "SPOTIFY_CLIENT_SECRET": "your_client_secret",
+        "SPOTIFY_REDIRECT_URI": "http://127.0.0.1:8080/callback"
+      }
+    }
+  }
+}
+```
 
-1. Make sure `uv` is updated. I recommend version `>=0.54`.
-2. If cloning locally, enable execution permisisons for the project: `chmod -R 755`.
-3. Ensure you have Spotify premium (needed for running developer API). 
+### Config File Locations
 
-This MCP will emit logs to std err (as specified in the MCP) spec. On Mac the Claude Desktop app should emit these logs
-to `~/Library/Logs/Claude`. 
-On other platforms [you can find logs here](https://modelcontextprotocol.io/quickstart/user#getting-logs-from-claude-for-desktop).
+- **Claude Desktop (macOS)**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Claude Desktop (Windows)**: `%APPDATA%/Claude/claude_desktop_config.json`
 
+## Troubleshooting
 
-You can launch the MCP Inspector via [`npm`](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) with this command:
+1. **Make sure `uv` is updated** -- version `>=0.54` recommended
+2. **First run OAuth**: On the first tool call, a browser window will open for Spotify login. After authorizing, the token is cached locally in `.cache`
+3. **No active device error**: Make sure Spotify is open and playing on at least one device
+4. **Permission errors on Linux/Mac**: `chmod -R 755 /path/to/spotify-mcp`
+
+### Debugging
+
+Launch the MCP Inspector:
 
 ```bash
 npx @modelcontextprotocol/inspector uv --directory /path/to/spotify-mcp run spotify-mcp
 ```
 
-Upon launching, the Inspector will display a URL that you can access in your browser to begin debugging.
+Logs are emitted to stderr. On Mac, Claude Desktop logs are at `~/Library/Logs/Claude`.
 
-## TODO
+## Spotify API Feb 2026 Changes Summary
 
-Unfortunately, a bunch of cool features have [now been deprecated](https://techcrunch.com/2024/11/27/spotify-cuts-developer-access-to-several-of-its-recommendation-features/)
-from the Spotify API. Most new features will be relatively minor or for the health of the project:
+Key changes that affected this MCP:
 
-- tests.
-- ~~adding API support for managing playlists.~~
-- adding API support for paginated search results/playlists/albums.
+| Change | Impact | Status |
+|--------|--------|--------|
+| Search `limit` max reduced 50 -> 10 | Fewer results per search | Adapted |
+| Playlist endpoints `/tracks` -> `/items` | Endpoint URLs changed | Adapted |
+| Response field `tracks` -> `items` | Parsing updated | Adapted |
+| Batch GET endpoints removed | Must fetch individually | Adapted |
+| `popularity` field removed from tracks | No longer available | Handled |
+| Dev Mode: 5 user limit, Premium required | Access restriction | Documented |
 
-PRs appreciated! Thanks to @jamiew, @davidpadbury, @manncodes, @hyuma7, @aanurraj, @JJGO and others for contributions.  
+For full details, see [Spotify's migration guide](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide).
 
-[//]: # (## Deployment)
+## Credits
 
-[//]: # (&#40;todo&#41;)
+- **Original project**: [varunneal/spotify-mcp](https://github.com/varunneal/spotify-mcp) by [Varun Srivastava](https://github.com/varunneal) (MIT License)
+- **Original contributors**: @jamiew, @davidpadbury, @manncodes, @hyuma7, @aanurraj, @JJGO and others
+- **Built with**: [Spotipy](https://github.com/spotipy-dev/spotipy) 2.24.0, [MCP SDK](https://github.com/modelcontextprotocol/python-sdk) 1.3.0
+- **Maintained with**: [Claude Code](https://claude.ai/claude-code) (Anthropic)
 
-[//]: # (### Building and Publishing)
+## License
 
-[//]: # ()
-[//]: # (To prepare the package for distribution:)
-
-[//]: # ()
-[//]: # (1. Sync dependencies and update lockfile:)
-
-[//]: # ()
-[//]: # (```bash)
-
-[//]: # (uv sync)
-
-[//]: # (```)
-
-[//]: # ()
-[//]: # (2. Build package distributions:)
-
-[//]: # ()
-[//]: # (```bash)
-
-[//]: # (uv build)
-
-[//]: # (```)
-
-[//]: # ()
-[//]: # (This will create source and wheel distributions in the `dist/` directory.)
-
-[//]: # ()
-[//]: # (3. Publish to PyPI:)
-
-[//]: # ()
-[//]: # (```bash)
-
-[//]: # (uv publish)
-
-[//]: # (```)
-
-[//]: # ()
-[//]: # (Note: You'll need to set PyPI credentials via environment variables or command flags:)
-
-[//]: # ()
-[//]: # (- Token: `--token` or `UV_PUBLISH_TOKEN`)
-
-[//]: # (- Or username/password: `--username`/`UV_PUBLISH_USERNAME` and `--password`/`UV_PUBLISH_PASSWORD`)
+MIT License -- see [LICENSE](LICENSE) for details.
