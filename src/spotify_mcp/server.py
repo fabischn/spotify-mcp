@@ -71,7 +71,7 @@ class Search(ToolModel):
 
 class Playlist(ToolModel):
     """Manage Spotify playlists."""
-    action: str = Field(description="Action to perform: 'get', 'get_tracks', 'add_tracks', 'remove_tracks', 'change_details', 'create'.")
+    action: str = Field(description="Action to perform: 'get', 'get_tracks', 'add_tracks', 'remove_tracks', 'change_details', 'create', 'delete'.")
     playlist_id: Optional[str] = Field(default=None, description="ID of the playlist to manage.")
     track_ids: Optional[List[str]] = Field(default=None, description="List of track IDs to add/remove.")
     name: Optional[str] = Field(default=None, description="Name for the playlist")
@@ -227,6 +227,15 @@ async def handle_call_tool(
                             public=arguments.get("public", True)
                         )
                         return [types.TextContent(type="text", text=json.dumps(playlist, indent=2))]
+
+                    case "delete":
+                        if not arguments.get("playlist_id"):
+                            return [types.TextContent(type="text", text="playlist_id is required")]
+                        await asyncio.to_thread(
+                            spotify_client.delete_playlist,
+                            arguments.get("playlist_id")
+                        )
+                        return [types.TextContent(type="text", text="Playlist deleted (unfollowed).")]
 
             case "LikedSongs":
                 action = arguments.get("action")

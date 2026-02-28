@@ -336,6 +336,15 @@ class Client:
         self.logger.info(f"Changed playlist details for {playlist_id}")
         return response
 
+    @utils.ensure_username
+    def delete_playlist(self, playlist_id: str):
+        """Unfollow (delete) a playlist. Only works for playlists the user owns or follows."""
+        if not self.auth_ok(): self.auth_refresh()
+        if not playlist_id:
+            raise ValueError("No playlist ID provided.")
+        self.sp._delete(f"playlists/{playlist_id}/followers")
+        self.logger.info(f"Deleted (unfollowed) playlist {playlist_id}")
+
     # ── Devices ──────────────────────────────────────────────────────
 
     def get_devices(self) -> dict:
