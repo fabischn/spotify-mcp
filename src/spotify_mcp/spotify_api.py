@@ -140,30 +140,34 @@ class Client:
         """Fetch tracks released by a single artist since `cutoff`. Internal use only."""
         tracks = []
         offset = 0
+
         while True:
-            page = self.sp._get(
-                f"artists/{artist_id}/albums",
-                include_groups="album,single",
+            page = self.sp.artist_albums(
+                artist_id,
+                album_type='album,single',
                 limit=self.DEV_LIMIT,
                 offset=offset,
             )
             if not page or not page.get('items'):
                 break
 
-            all_outside = True
+            stop = False
             for album in page['items']:
                 raw_date = album.get('release_date', '')
                 release_dt = self._parse_release_date(raw_date)
-                if release_dt is None or release_dt < cutoff:
+                if release_dt is None:
                     continue
+                # Albums are returned newest-first — once we pass the cutoff we can stop
+                if release_dt < cutoff:
+                    stop = True
+                    break
 
-                all_outside = False
                 album_id = album.get('id')
                 album_name = album.get('name')
                 album_type = album.get('album_type', 'album')
 
                 try:
-                    album_tracks = self.sp._get(f"albums/{album_id}/tracks", limit=self.DEV_LIMIT)
+                    album_tracks = self.sp.album_tracks(album_id, limit=50)
                     for t in (album_tracks or {}).get('items', []):
                         if not t:
                             continue
@@ -176,12 +180,11 @@ class Client:
                             'album': album_name,
                             'album_type': album_type,
                             'release_date': raw_date,
-                            'artist_id': artist_id,
                         })
                 except Exception as e:
                     self.logger.error(f"Error fetching tracks for album {album_id}: {str(e)}")
 
-            if not page.get('next') or all_outside:
+            if stop or not page.get('next'):
                 break
             offset += self.DEV_LIMIT
 
