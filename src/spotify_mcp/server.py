@@ -86,6 +86,11 @@ class LikedSongs(ToolModel):
 class FollowedArtists(ToolModel):
     """Get all artists the currently logged-in Spotify user is following."""
 
+class ArtistLatestReleases(ToolModel):
+    """Get the latest released tracks for a specific artist within a given timeframe."""
+    artist_id: str = Field(description="Spotify artist ID.")
+    days: Optional[int] = Field(default=30, description="How many days back to look for releases. Default is 30.")
+
 @server.list_prompts()
 async def handle_list_prompts() -> list[types.Prompt]:
     return []
@@ -105,6 +110,7 @@ async def handle_list_tools() -> list[types.Tool]:
         Playlist.as_tool(),
         LikedSongs.as_tool(),
         FollowedArtists.as_tool(),
+        ArtistLatestReleases.as_tool(),
     ]
     logger.info(f"Available tools: {[tool.name for tool in tools]}")
     return tools
@@ -117,6 +123,7 @@ async def handle_call_tool(
     logger.info(f"Tool called: {name} with arguments: {arguments}")
     if not name.startswith("Spotify"):
         return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
+    arguments = arguments or {}
     spotify_client = get_spotify_client()
     try:
         match name[7:]:
@@ -285,6 +292,21 @@ async def handle_call_tool(
                 return [types.TextContent(
                     type="text",
                     text=json.dumps({"total": len(artists), "artists": artists}, indent=2)
+                )]
+
+            case "ArtistLatestReleases":
+                artist_id = arguments.get("artist_id")
+                if not artist_id:
+                    return [types.TextContent(type="text", text="artist_id is required")]
+                days = int(arguments.get("days", 30))
+                tracks = await asyncio.to_thread(
+                    spotify_client.get_artist_latest_releases,
+                    artist_id=artist_id,
+                    days=days,
+                )
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"total": len(tracks), "tracks": tracks}, indent=2)
                 )]
 
             case _:

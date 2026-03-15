@@ -1,6 +1,7 @@
 import logging
 import os
 import concurrent.futures
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List
 
 import spotipy
@@ -120,6 +121,79 @@ class Client:
                 playlist = self.sp._get(f"playlists/{item_id}")
                 return utils.parse_playlist(playlist, self.username, detailed=True)
         raise ValueError(f"Unknown qtype {qtype}")
+
+    # ── Latest Releases ───────────────────────────────────────────────
+
+    def get_artist_latest_releases(self, artist_id: str, days: int = 30) -> List[Dict]:
+        """Return tracks released by an artist within the last `days` days.
+
+        Fetches the artist's albums/singles/EPs sorted by release date (newest
+        first), stops as soon as albums fall outside the timeframe, then
+        expands each qualifying album into its individual tracks.
+        """
+        if not self.auth_ok(): self.auth_refresh()
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        tracks = []
+        offset = 0
+
+        while True:
+            page = self.sp._get(
+                f"artists/{artist_id}/albums",
+                include_groups="album,single",
+                limit=self.DEV_LIMIT,
+                offset=offset,
+            )
+            if not page or not page.get('items'):
+                break
+
+            all_outside = True
+            for album in page['items']:
+                raw_date = album.get('release_date', '')
+                # Spotify may give YYYY, YYYY-MM, or YYYY-MM-DD
+                parts = raw_date.split('-')
+                try:
+                    if len(parts) == 3:
+                        release_dt = datetime(int(parts[0]), int(parts[1]), int(parts[2]), tzinfo=timezone.utc)
+                    elif len(parts) == 2:
+                        release_dt = datetime(int(parts[0]), int(parts[1]), 1, tzinfo=timezone.utc)
+                    else:
+                        release_dt = datetime(int(parts[0]), 1, 1, tzinfo=timezone.utc)
+                except (ValueError, IndexError):
+                    continue
+
+                if release_dt < cutoff:
+                    continue
+
+                all_outside = False
+                album_id = album.get('id')
+                album_name = album.get('name')
+                album_type = album.get('album_type', 'album')
+
+                try:
+                    album_tracks = self.sp._get(f"albums/{album_id}/tracks", limit=self.DEV_LIMIT)
+                    for t in (album_tracks or {}).get('items', []):
+                        if not t:
+                            continue
+                        tracks.append({
+                            'id': t.get('id'),
+                            'uri': t.get('uri'),
+                            'name': t.get('name'),
+                            'track_number': t.get('track_number'),
+                            'duration_ms': t.get('duration_ms'),
+                            'artists': [a.get('name') for a in t.get('artists', [])],
+                            'album': album_name,
+                            'album_type': album_type,
+                            'release_date': raw_date,
+                        })
+                except Exception as e:
+                    self.logger.error(f"Error fetching tracks for album {album_id}: {str(e)}")
+
+            if not page.get('next') or all_outside:
+                break
+            offset += self.DEV_LIMIT
+
+        return tracks
 
     # ── Playback ──────────────────────────────────────────────────────
 
