@@ -301,15 +301,14 @@ async def handle_call_tool(
                 if not artist_ids:
                     return [types.TextContent(type="text", text="artist_ids is required")]
                 days = int(arguments.get("days", 30))
-                results = await asyncio.to_thread(
+                tracks = await asyncio.to_thread(
                     spotify_client.get_artist_latest_releases,
                     artist_ids=artist_ids,
                     days=days,
                 )
-                total = sum(len(v) for v in results.values())
                 return [types.TextContent(
                     type="text",
-                    text=json.dumps({"total": total, "days": days, "by_artist": results}, indent=2)
+                    text=json.dumps({"total": len(tracks), "days": days, "tracks": tracks}, indent=2)
                 )]
 
             case _:

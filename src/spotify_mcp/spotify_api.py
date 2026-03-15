@@ -136,83 +136,81 @@ class Client:
         except (ValueError, IndexError):
             return None
 
-    def _fetch_artist_releases(self, artist_id: str, cutoff: datetime) -> List[Dict]:
-        """Fetch tracks released by a single artist since `cutoff`. Internal use only."""
-        tracks = []
-        offset = 0
+    def get_artist_latest_releases(self, artist_ids: List[str], days: int = 30) -> List[Dict]:
+        """For each artist ID check whether new tracks were released within the last
+        `days` days and return them as a flat list sorted by release date descending.
 
-        while True:
-            page = self.sp.artist_albums(
-                artist_id,
-                album_type='album,single',
-                limit=self.DEV_LIMIT,
-                offset=offset,
-            )
-            if not page or not page.get('items'):
-                break
-
-            stop = False
-            for album in page['items']:
-                raw_date = album.get('release_date', '')
-                release_dt = self._parse_release_date(raw_date)
-                if release_dt is None:
-                    continue
-                # Albums are returned newest-first — once we pass the cutoff we can stop
-                if release_dt < cutoff:
-                    stop = True
-                    break
-
-                album_id = album.get('id')
-                album_name = album.get('name')
-                album_type = album.get('album_type', 'album')
-
-                try:
-                    album_tracks = self.sp.album_tracks(album_id, limit=50)
-                    for t in (album_tracks or {}).get('items', []):
-                        if not t:
-                            continue
-                        tracks.append({
-                            'id': t.get('id'),
-                            'uri': t.get('uri'),
-                            'name': t.get('name'),
-                            'duration_ms': t.get('duration_ms'),
-                            'artists': [a.get('name') for a in t.get('artists', [])],
-                            'album': album_name,
-                            'album_type': album_type,
-                            'release_date': raw_date,
-                        })
-                except Exception as e:
-                    self.logger.error(f"Error fetching tracks for album {album_id}: {str(e)}")
-
-            if stop or not page.get('next'):
-                break
-            offset += self.DEV_LIMIT
-
-        return tracks
-
-    def get_artist_latest_releases(self, artist_ids: List[str], days: int = 30) -> Dict:
-        """Return tracks released by one or more artists within the last `days` days.
-
-        Fetches all artists in parallel. Returns a dict keyed by artist_id so
-        the AI can correlate results without extra round-trips.
+        Iterates sequentially (Spotipy client is not thread-safe).
         """
         if not self.auth_ok(): self.auth_refresh()
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        all_tracks: List[Dict] = []
 
-        results: Dict[str, List[Dict]] = {}
-
-        def fetch(aid: str):
+        for artist_id in artist_ids:
             try:
-                return aid, self._fetch_artist_releases(aid, cutoff)
+                artist_name = None
+                offset = 0
+
+                while True:
+                    page = self.sp.artist_albums(
+                        artist_id,
+                        album_type='album,single',
+                        limit=self.DEV_LIMIT,
+                        offset=offset,
+                    )
+                    if not page or not page.get('items'):
+                        break
+
+                    reached_cutoff = False
+                    for album in page['items']:
+                        raw_date = album.get('release_date', '')
+                        release_dt = self._parse_release_date(raw_date)
+                        if release_dt is None:
+                            continue
+                        # Spotify returns albums newest-first — stop once we pass the cutoff
+                        if release_dt < cutoff:
+                            reached_cutoff = True
+                            break
+
+                        album_id = album.get('id')
+                        album_name = album.get('name')
+                        album_type_str = album.get('album_type', 'album')
+
+                        try:
+                            album_tracks = self.sp.album_tracks(album_id, limit=50)
+                            for t in (album_tracks or {}).get('items', []):
+                                if not t:
+                                    continue
+                                # Resolve artist name once from the first track
+                                if artist_name is None:
+                                    for a in t.get('artists', []):
+                                        if a.get('id') == artist_id:
+                                            artist_name = a.get('name')
+                                            break
+                                all_tracks.append({
+                                    'id': t.get('id'),
+                                    'uri': t.get('uri'),
+                                    'name': t.get('name'),
+                                    'duration_ms': t.get('duration_ms'),
+                                    'artists': [a.get('name') for a in t.get('artists', [])],
+                                    'album': album_name,
+                                    'album_type': album_type_str,
+                                    'release_date': raw_date,
+                                    'artist_id': artist_id,
+                                    'artist_name': artist_name,
+                                })
+                        except Exception as e:
+                            self.logger.error(f"Error fetching tracks for album {album_id}: {str(e)}")
+
+                    if reached_cutoff or not page.get('next'):
+                        break
+                    offset += self.DEV_LIMIT
+
             except Exception as e:
-                self.logger.error(f"Error fetching releases for artist {aid}: {str(e)}")
-                return aid, []
+                self.logger.error(f"Error fetching releases for artist {artist_id}: {str(e)}")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            for aid, tracks in executor.map(fetch, artist_ids):
-                results[aid] = tracks
-
-        return results
+        all_tracks.sort(key=lambda t: t.get('release_date', ''), reverse=True)
+        return all_tracks
 
     # ── Playback ──────────────────────────────────────────────────────
 
