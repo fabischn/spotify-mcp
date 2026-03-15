@@ -124,19 +124,22 @@ class Client:
 
     # ── Latest Releases ───────────────────────────────────────────────
 
-    def get_artist_latest_releases(self, artist_id: str, days: int = 30) -> List[Dict]:
-        """Return tracks released by an artist within the last `days` days.
+    def _parse_release_date(self, raw_date: str) -> Optional[datetime]:
+        parts = raw_date.split('-')
+        try:
+            if len(parts) == 3:
+                return datetime(int(parts[0]), int(parts[1]), int(parts[2]), tzinfo=timezone.utc)
+            elif len(parts) == 2:
+                return datetime(int(parts[0]), int(parts[1]), 1, tzinfo=timezone.utc)
+            else:
+                return datetime(int(parts[0]), 1, 1, tzinfo=timezone.utc)
+        except (ValueError, IndexError):
+            return None
 
-        Fetches the artist's albums/singles/EPs sorted by release date (newest
-        first), stops as soon as albums fall outside the timeframe, then
-        expands each qualifying album into its individual tracks.
-        """
-        if not self.auth_ok(): self.auth_refresh()
-
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    def _fetch_artist_releases(self, artist_id: str, cutoff: datetime) -> List[Dict]:
+        """Fetch tracks released by a single artist since `cutoff`. Internal use only."""
         tracks = []
         offset = 0
-
         while True:
             page = self.sp._get(
                 f"artists/{artist_id}/albums",
@@ -150,19 +153,8 @@ class Client:
             all_outside = True
             for album in page['items']:
                 raw_date = album.get('release_date', '')
-                # Spotify may give YYYY, YYYY-MM, or YYYY-MM-DD
-                parts = raw_date.split('-')
-                try:
-                    if len(parts) == 3:
-                        release_dt = datetime(int(parts[0]), int(parts[1]), int(parts[2]), tzinfo=timezone.utc)
-                    elif len(parts) == 2:
-                        release_dt = datetime(int(parts[0]), int(parts[1]), 1, tzinfo=timezone.utc)
-                    else:
-                        release_dt = datetime(int(parts[0]), 1, 1, tzinfo=timezone.utc)
-                except (ValueError, IndexError):
-                    continue
-
-                if release_dt < cutoff:
+                release_dt = self._parse_release_date(raw_date)
+                if release_dt is None or release_dt < cutoff:
                     continue
 
                 all_outside = False
@@ -179,12 +171,12 @@ class Client:
                             'id': t.get('id'),
                             'uri': t.get('uri'),
                             'name': t.get('name'),
-                            'track_number': t.get('track_number'),
                             'duration_ms': t.get('duration_ms'),
                             'artists': [a.get('name') for a in t.get('artists', [])],
                             'album': album_name,
                             'album_type': album_type,
                             'release_date': raw_date,
+                            'artist_id': artist_id,
                         })
                 except Exception as e:
                     self.logger.error(f"Error fetching tracks for album {album_id}: {str(e)}")
@@ -194,6 +186,30 @@ class Client:
             offset += self.DEV_LIMIT
 
         return tracks
+
+    def get_artist_latest_releases(self, artist_ids: List[str], days: int = 30) -> Dict:
+        """Return tracks released by one or more artists within the last `days` days.
+
+        Fetches all artists in parallel. Returns a dict keyed by artist_id so
+        the AI can correlate results without extra round-trips.
+        """
+        if not self.auth_ok(): self.auth_refresh()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        results: Dict[str, List[Dict]] = {}
+
+        def fetch(aid: str):
+            try:
+                return aid, self._fetch_artist_releases(aid, cutoff)
+            except Exception as e:
+                self.logger.error(f"Error fetching releases for artist {aid}: {str(e)}")
+                return aid, []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            for aid, tracks in executor.map(fetch, artist_ids):
+                results[aid] = tracks
+
+        return results
 
     # ── Playback ──────────────────────────────────────────────────────
 

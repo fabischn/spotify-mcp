@@ -87,8 +87,8 @@ class FollowedArtists(ToolModel):
     """Get all artists the currently logged-in Spotify user is following."""
 
 class ArtistLatestReleases(ToolModel):
-    """Get the latest released tracks for a specific artist within a given timeframe."""
-    artist_id: str = Field(description="Spotify artist ID.")
+    """Get the latest released tracks for one or more artists within a given timeframe. Returns results grouped by artist_id."""
+    artist_ids: List[str] = Field(description="List of Spotify artist IDs to fetch releases for.")
     days: Optional[int] = Field(default=30, description="How many days back to look for releases. Default is 30.")
 
 @server.list_prompts()
@@ -295,18 +295,21 @@ async def handle_call_tool(
                 )]
 
             case "ArtistLatestReleases":
-                artist_id = arguments.get("artist_id")
-                if not artist_id:
-                    return [types.TextContent(type="text", text="artist_id is required")]
+                artist_ids = arguments.get("artist_ids")
+                if isinstance(artist_ids, str):
+                    artist_ids = json.loads(artist_ids)
+                if not artist_ids:
+                    return [types.TextContent(type="text", text="artist_ids is required")]
                 days = int(arguments.get("days", 30))
-                tracks = await asyncio.to_thread(
+                results = await asyncio.to_thread(
                     spotify_client.get_artist_latest_releases,
-                    artist_id=artist_id,
+                    artist_ids=artist_ids,
                     days=days,
                 )
+                total = sum(len(v) for v in results.values())
                 return [types.TextContent(
                     type="text",
-                    text=json.dumps({"total": len(tracks), "tracks": tracks}, indent=2)
+                    text=json.dumps({"total": total, "days": days, "by_artist": results}, indent=2)
                 )]
 
             case _:
