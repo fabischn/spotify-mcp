@@ -43,6 +43,7 @@ class Client:
             "playlist-read-collaborative",
             "playlist-modify-private",
             "playlist-modify-public",
+            "user-follow-read",
         ])
         try:
             self.sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
@@ -251,6 +252,23 @@ class Client:
                 genres_map[aid] = genres
                 
         return genres_map
+
+    def get_followed_artists(self) -> List[Dict]:
+        """Fetch all artists the current user follows."""
+        if not self.auth_ok(): self.auth_refresh()
+        artists = []
+        after = None
+        while True:
+            results = self.sp._get("me/following", type="artist", limit=50, after=after)
+            page = results.get('artists', {}) if results else {}
+            for item in page.get('items', []):
+                if item:
+                    artists.append(utils.parse_artist(item, detailed=True))
+            cursors = page.get('cursors') or {}
+            after = cursors.get('after')
+            if not after or not page.get('next'):
+                break
+        return artists
 
     # ── Playlist ─────────────────────────────────────────────────────
 

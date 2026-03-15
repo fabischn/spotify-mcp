@@ -83,6 +83,9 @@ class LikedSongs(ToolModel):
     action: str = Field(description="Action to perform: 'get' or 'get_with_genres'.")
     limit: Optional[int] = Field(default=0, description="Max number of songs to return. 0 for all songs.")
 
+class FollowedArtists(ToolModel):
+    """Get all artists the currently logged-in Spotify user is following."""
+
 @server.list_prompts()
 async def handle_list_prompts() -> list[types.Prompt]:
     return []
@@ -101,6 +104,7 @@ async def handle_list_tools() -> list[types.Tool]:
         GetInfo.as_tool(),
         Playlist.as_tool(),
         LikedSongs.as_tool(),
+        FollowedArtists.as_tool(),
     ]
     logger.info(f"Available tools: {[tool.name for tool in tools]}")
     return tools
@@ -275,6 +279,13 @@ async def handle_call_tool(
                             type="text",
                             text=json.dumps({"total": len(tracks), "tracks": tracks}, indent=2)
                         )]
+
+            case "FollowedArtists":
+                artists = await asyncio.to_thread(spotify_client.get_followed_artists)
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"total": len(artists), "artists": artists}, indent=2)
+                )]
 
             case _:
                 error_msg = f"Unknown tool: {name}"
